@@ -201,6 +201,26 @@ Six occurrences. `packages/tui/src/utils.ts` uses ES2024 `v`-flag (unicodeSets) 
 skips that grammar check, so the repo has an undeclared dependency on tsgo-specific
 permissiveness. Failed run: 74.05 s wall, 124.39 s CPU, `BUILD_EXIT=2`.
 
+**x86_64 control, run to attribute this correctly.** Same machine, same tsconfig
+(`target: ES2022`), same file, both compilers:
+
+| Compiler | Result on `packages/tui` |
+|---|---|
+| `tsgo` 7.0.0-dev.20260120.1 | **exit 0**, emits `dist/utils.js` |
+| `tsc` 5.9.3 | **exit 2**, the same six TS1501 errors, same lines |
+
+So the divergence belongs to the compiler pair, not the architecture. Worth stating plainly
+because "the build fails on riscv64" is the conclusion a single-platform run invites, and it
+would have been wrong.
+
+Two incidental notes from that control, both about the harness rather than the subject.
+`tsc` still **emits** despite the TS1501 errors (`noEmitOnError` is not set) — it is the
+non-zero exit that breaks the `&&` chain, so "dist exists" is not proof a package compiled
+cleanly. And shimming by writing over `node_modules/.bin/tsgo` is unsafe: that path is a
+symlink, so the write lands on `@typescript/native-preview/bin/tsgo.js` and corrupts the real
+package for every consumer — including the `.orig` backup taken with `cp -a`, which copies
+the link rather than the file. Reinstall the package to recover.
+
 Candidate fix under test: `target`/`lib` -> `ES2024` in `tsconfig.base.json`. It clears the
 TS1501 errors and `packages/tui` compiles. The regexes are runtime features that Node 22
 already supports, so this declares what the code actually needs rather than changing
