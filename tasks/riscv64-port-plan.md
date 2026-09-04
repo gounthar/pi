@@ -47,7 +47,7 @@ mentioning riscv [searched, 0 hits], so this is unproven, not proven.
 - [x] Confirm which of the two happened: clipboard native loaded (riscv64 prebuilt)
 - [x] Confirm `@esbuild/linux-riscv64` resolved (note: `--ignore-scripts` skips esbuild's
       postinstall verifier, so check the binary path resolves by hand)
-- [x] One real agent turn. Point it at the local llama-server from the existing
+- [x] One real agent turn (chat only; tool loop remains open, see above). Point it at the local llama-server from the existing
       article series rather than a paid API — that also feeds part 2/3 of the series.
 
 Outcome is binary: "already works, here is the evidence" (then Phase 1-3 are the real
@@ -105,6 +105,35 @@ had a native riscv64 `llama-server` (`built with GNU 14.2.0 for Linux riscv64`,
 
 The 43 s is model inference on a CPU, not pi overhead; pi's own share is the 6.31 s of
 user CPU.
+
+### The agent tool loop is NOT proven — open item
+
+Two models were tried and **neither emitted a valid tool call**, so the agent loop has not
+been demonstrated end to end on this board.
+
+| Model | Result | Cost |
+|---|---|---|
+| Llama-3.2-1B-Instruct-Q4_K_M | Echoed the `read` tool JSON schema back as prose | 213.85 s wall |
+| Qwen2.5-Coder-1.5B-Instruct-Q4_K_M | Replied `"Hello, world! How can I assist you today?"`, ignoring file and tool | 254.39 s wall |
+
+Both runs sent ~1,400 tokens of tool schemas and came back with exactly **one** router
+prompt — no second request, therefore no tool executed and no result fed back.
+
+**This is a model-capability result, not a riscv64 result.** pi's tool-call parsing and
+execution are plain JS with nothing architecture-specific in them. Proving the loop needs
+a model competent at function calling, which at usable speed is beyond what an F3 does on
+CPU: a 1.5B Q4 here generates at roughly 2 tok/s, so a 7B would be impractical. The
+sensible way to close this is to point pi at a remote API once, purely to confirm the loop,
+and keep local llama.cpp for the offline story.
+
+A caution for whoever picks this up: **do not use output-token growth in the router log as
+proof of a round trip.** An earlier attempt appeared to show one (prompt sizes 1432 -> 1491)
+and it was an artefact. Killing a previous run with `pkill -f "pi -p"` had reaped the
+`/usr/bin/time` wrapper but reparented the node child to init, where it kept generating
+into the same log for another 11 minutes. Two runs, one log. The clean re-run — server
+restarted, log truncated, single pi process verified — showed one prompt and no round trip.
+Verify process isolation before trusting a shared log, and note that `pkill -f "pi -p"`
+also matches the SSH command string carrying it, which killed the controlling session twice.
 
 ### Config gotcha worth writing down
 
