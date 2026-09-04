@@ -180,6 +180,33 @@ So `npm ci` looks green and the build is the thing that breaks. A CI job that ga
 install success would pass and mislead. (Install itself took 3m for one package, versus
 41s for pi's whole 127-package tree — npm spent that time resolving, not compiling.)
 
+#### Phase 1 finding: `tsc` is NOT a drop-in for `tsgo`
+
+Measured on the board 2026-09-04. The plan assumed the swap was near-free and named that as
+its main risk. The risk was real, and the reason has nothing to do with riscv64.
+
+Shimming `node_modules/.bin/tsgo` to `tsc` 5.9.3 and running `npm run build:offline` builds
+`chord`, then fails in `packages/tui`:
+
+```
+src/utils.ts(40,100): error TS1501: This regular expression flag is only available
+                      when targeting 'es2024' or later.
+```
+
+Six occurrences. `packages/tui/src/utils.ts` uses ES2024 `v`-flag (unicodeSets) regexes —
+`/\p{RGI_Emoji}/v`, `[\p{Spacing_Mark}--[...]]` set subtraction — while
+`tsconfig.base.json` declares `"target": "ES2022"`, `"lib": ["ES2022"]`.
+
+**`tsc` enforces TS1501; `tsgo` does not.** The build currently succeeds only because tsgo
+skips that grammar check, so the repo has an undeclared dependency on tsgo-specific
+permissiveness. Failed run: 74.05 s wall, 124.39 s CPU, `BUILD_EXIT=2`.
+
+Candidate fix under test: `target`/`lib` -> `ES2024` in `tsconfig.base.json`. It clears the
+TS1501 errors and `packages/tui` compiles. The regexes are runtime features that Node 22
+already supports, so this declares what the code actually needs rather than changing
+behaviour — but it is a real config change affecting every consumer's emit, not a riscv64
+workaround, and it needs upstream's opinion rather than ours.
+
 - [ ] Swap in `tsc`. `typescript@5.9.3` is already a root devDependency, and `tsgo -p X`
       is CLI-compatible with `tsc -p X`. Verify rather than assume — tsgo is a TS7
       preview and may differ on `erasableSyntaxOnly` / emit details.
