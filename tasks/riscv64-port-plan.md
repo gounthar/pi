@@ -137,6 +137,20 @@ issue can now lead with numbers instead of a proposal.
 One blocker: **every package's `build` script calls `tsgo`**, which has no riscv64
 binary. 13 call sites across `packages/*/package.json` and the root `check`. [grepped]
 
+**Measured on the board 2026-09-04, and the failure mode is worse than the registry
+metadata suggested.** `npm install @typescript/native-preview@7.0.0-dev.20260120.1` on
+riscv64 **succeeds** — exit 0, `node_modules/.bin/tsgo` is created — and then throws when
+executed:
+
+```
+Unable to resolve @typescript/native-preview-linux-riscv64. Either your platform is
+unsupported, or you are missing the package on disk.
+```
+
+So `npm ci` looks green and the build is the thing that breaks. A CI job that gates on
+install success would pass and mislead. (Install itself took 3m for one package, versus
+41s for pi's whole 127-package tree — npm spent that time resolving, not compiling.)
+
 - [ ] Swap in `tsc`. `typescript@5.9.3` is already a root devDependency, and `tsgo -p X`
       is CLI-compatible with `tsc -p X`. Verify rather than assume — tsgo is a TS7
       preview and may differ on `erasableSyntaxOnly` / emit details.
