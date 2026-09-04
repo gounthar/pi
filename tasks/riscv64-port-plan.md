@@ -241,6 +241,44 @@ workaround, and it needs upstream's opinion rather than ours.
       a partial run as green.
 - [ ] Log wall + CPU time for the full build.
 
+## Phase 1 RESULT — pi builds from source on riscv64
+
+`BUILD_EXIT=0`. All ten packages compile and the esbuild bundle is produced, on the board,
+2026-09-04. Three changes were needed, and only the first is about the architecture.
+
+| Step | Measurement |
+|---|---|
+| `git clone --depth 1` + `npm install --ignore-scripts` | 316 packages, **268.23 s** wall (63.01 s user + 12.73 s sys), 196 MB |
+| `npm run hydrate:model-data` | **7.52 s** |
+| `npm run build:offline` | **593.85 s** wall (9m54s), **904.20 s user** + 26.32 s sys, 892 MB peak RSS |
+| Artifacts | 10 `dist/` dirs; `packages/coding-agent/dist/bundle/{cli,client,coordinator,rpc-entry}.js` + chunks |
+| `node dist/bundle/cli.js --version` | `0.84.4`, rc=0 |
+
+### The three changes
+
+1. **Shim `tsgo` to `tsc`** — the riscv64 blocker. Note the shim must not be written over
+   `node_modules/.bin/tsgo` directly; see the symlink warning above.
+2. **`target`/`lib` -> `ES2024`** in `tsconfig.base.json` — required by `tsc`, not by riscv64,
+   per the x86_64 control.
+3. **Run `hydrate:model-data` first** — a fresh clone has no `packages/ai/src/providers/data/*.json`
+   and `build:offline` refuses without it. Upstream CI does this; it is not a port issue.
+
+### What the numbers say about CI
+
+904 s of CPU against 594 s of wall is ~1.5x parallelism, so this is mostly a serial
+single-core TypeScript compile. A native riscv64 build is therefore ~10 minutes on an F3
+plus 4.5 minutes of install — usable for verification, too slow for per-PR CI. Cross-building
+on x86 and testing the artifact natively remains the right split, exactly as for the OpenClaw
+image.
+
+### Still open
+
+`node dist/bundle/cli.js --version` and `--help` both work, but a from-source *inference* run
+had not completed at time of writing: the process sat at ~3% CPU for minutes without ever
+reaching the local llama-server (zero router prompts), which looks like a blocking startup
+network fetch rather than a build defect. Retry with `--offline` / `PI_OFFLINE=1`. Until that
+passes, the honest claim is **"builds and starts"**, not "builds and works".
+
 ## Phase 2 — Docker image for riscv64
 
 Reuse the pattern already proven in the OpenClaw work: separate `Dockerfile.riscv64`,
