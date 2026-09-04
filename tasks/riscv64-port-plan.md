@@ -271,13 +271,35 @@ plus 4.5 minutes of install — usable for verification, too slow for per-PR CI.
 on x86 and testing the artifact natively remains the right split, exactly as for the OpenClaw
 image.
 
-### Still open
+### The from-source build does real inference
 
-`node dist/bundle/cli.js --version` and `--help` both work, but a from-source *inference* run
-had not completed at time of writing: the process sat at ~3% CPU for minutes without ever
-reaching the local llama-server (zero router prompts), which looks like a blocking startup
-network fetch rather than a build defect. Retry with `--offline` / `PI_OFFLINE=1`. Until that
-passes, the honest claim is **"builds and starts"**, not "builds and works".
+```
+$ node ~/pi-src/packages/coding-agent/dist/bundle/cli.js -p --no-session --no-tools \
+    --model llamacpp-local/Llama-3.2-1B-Instruct-Q4_K_M "Say hello from RISC-V in five words."
+"Hello from RISC-V."
+
+WALL 32.21 s | USER 6.89 s | MAXRSS 121696 KB
+```
+
+Phase 1 is therefore **"builds and works"**, not merely "builds and starts".
+
+### A self-inflicted detour, recorded so it is not repeated
+
+Four runs before that one timed out (240 s, 300 s, 330 s, 330 s) and nearly went into this
+document as a defect in the from-source build. They were not. Two controls caught it:
+
+1. The **npm-installed** pi — already proven working in Phase 0 — timed out **identically**
+   under the same flags. That exonerated the build.
+2. Re-running the **exact Phase 0 command** (no added flags) completed in 44.53 s, proving
+   the board and the server were fine.
+
+The variable was flags this investigation had added itself — `--offline` / `PI_OFFLINE=1`
+and/or the `contextWindow`/`maxTokens` caps in `models.json`. Removing them, the from-source
+build answered in 32.21 s.
+
+The tell was in the numbers the whole time and was misread twice: 300 s of wall clock against
+**5.25 s of user CPU** is a process blocked on I/O, not one doing slow work on a slow board.
+When wall and CPU diverge by two orders of magnitude, suspect the harness, not the subject.
 
 ## Phase 2 — Docker image for riscv64
 
