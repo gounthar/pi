@@ -293,9 +293,24 @@ document as a defect in the from-source build. They were not. Two controls caugh
 2. Re-running the **exact Phase 0 command** (no added flags) completed in 44.53 s, proving
    the board and the server were fine.
 
-The variable was flags this investigation had added itself — `--offline` / `PI_OFFLINE=1`
-and/or the `contextWindow`/`maxTokens` caps in `models.json`. Removing them, the from-source
-build answered in 32.21 s.
+The variable was isolated to a single change, by adding the suspects back one at a time:
+
+| Configuration | Result |
+|---|---|
+| Baseline (npm pi, no extra flags) | **44.53 s**, answered |
+| From-source build, same flags | **32.21 s**, answered |
+| `+ --offline` only | **6.53 s**, answered — *faster*, it skips startup network work |
+| `+ contextWindow: 4096, maxTokens: 64` only | **150 s timeout, 0 requests sent**, 4.31 s CPU |
+
+So `--offline` was never the problem. **Setting `contextWindow`/`maxTokens` on a custom
+provider model in `models.json` makes pi hang before it issues the HTTP request at all** —
+the router log records no incoming request, and the process burns 4.31 s of CPU across
+150 s of wall clock.
+
+That is a reproducible finding worth reporting upstream, with one caveat this investigation
+cannot lift: **it has only been observed on riscv64.** Whether it reproduces on x86_64 has
+not been tested, so it must not be described as a riscv64 bug. Reproduce on x86 first; the
+same discipline that corrected the TS1501 misattribution applies here.
 
 The tell was in the numbers the whole time and was misread twice: 300 s of wall clock against
 **5.25 s of user CPU** is a process blocked on I/O, not one doing slow work on a slow board.
