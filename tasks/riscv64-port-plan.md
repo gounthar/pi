@@ -22,7 +22,7 @@ So the work splits into: prove the runtime path (probably already works), unbloc
 | Component | riscv64? | How I know |
 |---|---|---|
 | Node >= 22.19 (engines floor) | Yes | unofficial-builds index.json: 118 riscv64 releases incl. v26.0.0 [fetched] |
-| esbuild 0.28.1 (runtime dep of `chord`) | Yes | `@esbuild/linux-riscv64@0.28.1`, cpu=riscv64 [ran `npm view`] |
+| esbuild 0.28.1 (monorepo only) | Yes | `@esbuild/linux-riscv64@0.28.1`, cpu=riscv64 [ran `npm view`]. **Correction:** not shipped in the published package at all — neither `esbuild` nor `@earendil-works/chord` is present in the installed tree, so this matters only for a source build [verified on hardware] |
 | `@mariozechner/clipboard` 0.3.9 (optional) | Yes | `clipboard-linux-riscv64-gnu@0.3.9`, cpu=riscv64, 1.2MB [ran `npm view`] |
 | `@silvia-odwyer/photon-node` | N/A | ships `photon_rs_bg.wasm`, arch-independent [read build script] |
 | sqlite session backend | N/A | no native dep; deps are pure workspace packages [read package.json] |
@@ -41,17 +41,96 @@ Highest value, lowest cost. The evidence says `npm i -g @earendil-works/pi-codin
 already works on riscv64. Nobody has ever tested it — upstream has zero issues or PRs
 mentioning riscv [searched, 0 hits], so this is unproven, not proven.
 
-- [ ] BananaPi F3: install Node riscv64 >= 22.19 (unofficial-builds, debian trixie)
-- [ ] `time npm i -g @earendil-works/pi-coding-agent --ignore-scripts` — log wall + CPU time
-- [ ] `pi --version`, `pi --help`
-- [ ] Confirm which of the two happened: clipboard native loaded, or nulled out
-- [ ] Confirm `@esbuild/linux-riscv64` resolved (note: `--ignore-scripts` skips esbuild's
+- [x] BananaPi F3: install Node riscv64 >= 22.19 (unofficial-builds, debian trixie)
+- [x] `time npm i -g @earendil-works/pi-coding-agent --ignore-scripts` — log wall + CPU time
+- [x] `pi --version`, `pi --help`
+- [x] Confirm which of the two happened: clipboard native loaded (riscv64 prebuilt)
+- [x] Confirm `@esbuild/linux-riscv64` resolved (note: `--ignore-scripts` skips esbuild's
       postinstall verifier, so check the binary path resolves by hand)
-- [ ] One real agent turn. Point it at the local llama-server from the existing
+- [x] One real agent turn. Point it at the local llama-server from the existing
       article series rather than a paid API — that also feeds part 2/3 of the series.
 
 Outcome is binary: "already works, here is the evidence" (then Phase 1-3 are the real
 port) or a concrete failure list that rewrites everything below.
+
+## Phase 0 RESULT — the runtime path works on riscv64
+
+Run on `bananapif3-2` (BananaPi F3, SpaceMiT K1, 8 cores, 15G, Armbian 26.8.3 trixie,
+Node v22.22.0) on 2026-09-04. All figures measured, not estimated.
+
+**It works.** `npm install -g @earendil-works/pi-coding-agent --ignore-scripts` succeeded
+with no riscv64-specific intervention of any kind.
+
+| Measurement | Value |
+|---|---|
+| Install wall clock | **41.03 s** (127 packages, exit 0) |
+| Install CPU | 46.51 s user + 8.44 s sys |
+| Install peak RSS | 221 MB |
+| `pi --version` | `0.84.4`, rc=0 |
+
+That install time deserves a note: the plan was written expecting something like the 23
+minutes OpenClaw took on this hardware. It was 41 seconds, because nothing is compiled
+from source — every dependency resolves to a prebuilt or to pure JS.
+
+### What was verified, scoped to pi's own tree
+
+- **Native binding**: exactly one is needed and it is riscv64-correct —
+  `node_modules/@mariozechner/clipboard-linux-riscv64-gnu/clipboard.linux-riscv64-gnu.node`.
+  It loads with its full napi surface (18 exports incl. `getImageBinary`), resolved from
+  pi's own tree, not from a neighbour. The darwin/win32 `.node` prebuilds ship in
+  `pi-tui` but are inert on Linux.
+- **No esbuild, no chord** in the published package. The plan's original claim that
+  esbuild is a shipped runtime dependency was wrong; corrected in the table above.
+- **Config/persistence**: pi created `~/.pi/agent/{auth.json,models-store.json}` on first
+  run.
+- **Error paths**: with no credentials, `--list-models` and `-p` both fail cleanly with an
+  actionable message and rc=0, rather than crashing.
+
+Method note: the first verification pass globbed the *global* npm root and reported
+riscv64 packages that actually belonged to a pre-existing `openclaw` install on the same
+board. Those were not evidence about pi. Every claim above was re-taken scoped to pi's
+install root.
+
+### Real inference on the board
+
+No API keys were used. llama.cpp is a first-class provider in pi, and the board already
+had a native riscv64 `llama-server` (`built with GNU 14.2.0 for Linux riscv64`,
+`RISCV_V = 1 | RVV_VLEN = 32` — the vector extension is live).
+
+- Model: `Llama-3.2-1B-Instruct-Q4_K_M`, 770 MB, downloaded in 72 s at ~10.7 MB/s
+- Router: `llama-server --models-dir ~/models --jinja --port 8080`
+- Baseline raw endpoint: `"Hello from RISC-V here."`, 8 tokens, 4.5 s
+- **Through pi**: `"Hello from RISC-V I'm here."` — WALL 43.40 s, USER 6.31 s,
+  MAXRSS 105 MB
+
+The 43 s is model inference on a CPU, not pi overhead; pi's own share is the 6.31 s of
+user CPU.
+
+### Config gotcha worth writing down
+
+`LLAMA_BASE_URL` alone did **not** make the provider visible — `--list-models` stayed
+empty and `pi auth check --provider llama` returned `not_ready`. Hand-writing the
+credential into `auth.json` (shape reverse-engineered from the bundle as
+`{"type":"api_key","env":{"LLAMA_BASE_URL":...}}`) also returned `not_ready`. The
+documented `/login llama.cpp` flow is interactive and needs a TTY.
+
+What worked is the documented custom-provider path, `~/.pi/agent/models.json`:
+
+```json
+{ "providers": { "llamacpp-local": {
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "api": "openai-completions", "apiKey": "none",
+    "models": [ { "id": "Llama-3.2-1B-Instruct-Q4_K_M" } ] } } }
+```
+
+Also note the router's load endpoints are `/models/load` and `/models/unload` — **not**
+under `/api/`, which is Ollama-compat only.
+
+### What this does to the rest of the plan
+
+Phase 0 is answered: **no runtime port work is required.** Phases 1-3 stand unchanged and
+are now the whole job — source build (`tsgo`), Docker, and the binary question. Phase 4's
+issue can now lead with numbers instead of a proposal.
 
 ## Phase 1 — Build from source on riscv64
 
